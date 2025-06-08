@@ -159,11 +159,14 @@ def main_page():
         video_id = "kpbzVG_lBY4"
 
     st.markdown(f"""
-        <iframe width="800" height="450"
-        src="https://www.youtube.com/embed/{video_id}?autoplay=1"
-        frameborder="0"
-        allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
-        allowfullscreen></iframe>
+        <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden;">
+            <iframe src="https://www.youtube.com/embed/{video_id}?autoplay=1"
+                    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
+                    frameborder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowfullscreen>
+            </iframe>
+        </div>
     """, unsafe_allow_html=True)
     st.markdown(f"<h1 style='text-align: center; color: black;'>Kelas Terbaru: {latest_kelas}</h1>", unsafe_allow_html=True)
 
