@@ -3,6 +3,7 @@
 import cv2
 import time
 import numpy as np
+import pandas as pd
 import firebase_admin
 from firebase_admin import credentials, db
 from ultralytics import YOLO
@@ -28,7 +29,7 @@ if not firebase_admin._apps:
         'databaseURL': 'https://securitydata-c84bb-default-rtdb.asia-southeast1.firebasedatabase.app'
     })
 
-yolo_model = YOLO("detection.pt")
+yolo_model = YOLO("yolo.pt")
 try:
     yolo_model.to('cuda')
 except:
@@ -51,17 +52,41 @@ def get_feature_value(data, key, default=0):
 
 def push_lgbm_to_firebase(pred, date_key, time_key):
     db.reference(f'/Dataset/{date_key}/{time_key}').update({'Kelas': pred})
-    db.reference('/KelasEsp').set(pred)
+
+    kelas_map = {
+        'Bahaya': 0,
+        'Dobrak': 1,
+        'Kosong': 2,
+        'Orang masuk': 3,
+        'Pembobolan': 4,
+        'Pencurian': 5,
+        'Tamu depan': 6,
+        'Waspada': 7
+    }
+
+    predInt = kelas_map.get(pred, -1)
+    db.reference('/KelasEsp').set(predInt)
+
+def push_yolo_to_firebase(date_key, time_key, manusia, jlh_barang, jlh_bahaya, mean_barang, mean_bahaya, posisi):
+    db.reference(f'/Dataset/{date_key}/{time_key}').set({
+        'Jumlah manusia': manusia,
+        'Jlh grup barang': jlh_barang,
+        'Jlh grup bahaya': jlh_bahaya,
+        'Mean grup barang': float(mean_barang),
+        'Mean grup bahaya': float(mean_bahaya),
+        'Luar': posisi
+    })
+    db.reference('/LuarESP').set(posisi)
 
 def kirim_notifikasi_telegram(kelas, frame):
     pesan_dict = {
-        0: "Deteksi: Ada manusia dengan objek berbahaya",
-        1: "⚠️ Deteksi: Ada upaya pendobrakan!",
-        3: "ℹ️ Deteksi: Seseorang memasuki rumah!",
-        4: "🚨 Deteksi: Telah terjadi pembobolan!",
-        5: "🚨 Deteksi: Telah terjadi pencurian",
-        6: "📡 Deteksi: Ada tamu di depan rumah!",
-        7: "📡 Deteksi: Ada manusia membawa benda!"
+        "Bahaya": "Deteksi: Ada manusia dengan objek berbahaya",
+        "Dobrak": "⚠️ Deteksi: Ada upaya pendobrakan!",
+        "Orang masuk": "ℹ️ Deteksi: Seseorang memasuki rumah!",
+        "Pembobolan": "🚨 Deteksi: Telah terjadi pembobolan!",
+        "Pencurian": "🚨 Deteksi: Telah terjadi pencurian",
+        "Tamu depan": "📡 Deteksi: Ada tamu di depan rumah!",
+        "Waspada": "📡 Deteksi: Ada manusia membawa benda!"
     }
     pesan = pesan_dict.get(kelas, "Deteksi tidak diketahui")
     try:
@@ -106,18 +131,24 @@ def klasifikasi_loop():
             latest_key = sorted(data_ref.keys())[-1]
             latest_data = data_ref[latest_key]
 
-            features = np.array([[
+            feature_names = [
+                'Getar', 'Suara', 'X', 'Y', 'Z',
+                'Jumlah manusia', 'Jlh grup barang', 'Jlh grup bahaya',
+                'Mean grup barang', 'Mean grup bahaya'
+            ]
+
+            features = pd.DataFrame([[
                 get_feature_value(latest_data, 'Getar'),
                 get_feature_value(latest_data, 'Suara'),
                 get_feature_value(latest_data, 'X'),
                 get_feature_value(latest_data, 'Y'),
                 get_feature_value(latest_data, 'Z'),
                 get_feature_value(latest_data, 'Jumlah manusia'),
-                get_feature_value(latest_data, 'Jlh manusiaxbarang'),
-                get_feature_value(latest_data, 'Jlh manusiaxbahaya'),
-                get_feature_value(latest_data, 'Mean barang'),
-                get_feature_value(latest_data, 'Mean bahaya')
-            ]])
+                get_feature_value(latest_data, 'Jlh grup barang'),
+                get_feature_value(latest_data, 'Jlh grup bahaya'),
+                get_feature_value(latest_data, 'Mean grup barang'),
+                get_feature_value(latest_data, 'Mean grup bahaya')
+            ]], columns=feature_names)
 
             prediction = lgbm_model.predict(features)[0]
             if prediction != last_prediction:
@@ -127,63 +158,3 @@ def klasifikasi_loop():
         except Exception as e:
             print(f"[LGBM THREAD ERROR] {e}")
         time.sleep(1)
-
-# === YOLO DEBUG VISUALIZATION === #
-def debug_yolo_only(frame):
-    results = yolo_model(frame, conf=0.3)[0]
-    print(f"[YOLO] Detections: {len(results.boxes)}")
-    for box in results.boxes:
-        x1, y1, x2, y2 = map(int, box.xyxy[0])
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0,255,0), 2)
-    return frame
-
-# === MAIN === #
-def main():
-    global last_frame_tele
-    print("[INFO] Starting...")
-
-    cap = VideoCaptureThreaded(RTSP_URL)
-    process = subprocess.Popen([
-        "C:/ffmpeg/bin/ffmpeg.exe",
-        '-loglevel', 'info', '-y',
-        '-f', 'rawvideo', '-vcodec', 'rawvideo',
-        '-pix_fmt', 'bgr24', '-s', f'{WIDTH}x{HEIGHT}', '-r', str(FPS), '-i', '-',
-        '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
-        '-c:a', 'aac', '-b:a', '128k', '-shortest', '-f', 'flv', RTMP_URL
-    ], stdin=subprocess.PIPE)
-
-    threading.Thread(target=klasifikasi_loop, daemon=True).start()
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("[RTSP] Frame kosong, reconnect...")
-            cap.stop()
-            time.sleep(2)
-            cap = VideoCaptureThreaded(RTSP_URL)
-            continue
-
-        frame = cv2.resize(frame, (WIDTH, HEIGHT))
-        last_frame_tele = frame.copy()
-
-        # TEMPORARY DEBUG YOLO VISUAL
-        frame = debug_yolo_only(frame)
-
-        cv2.imshow("YOLOv8 + Firebase + YouTube", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-        try:
-            process.stdin.write(frame.tobytes())
-        except Exception as e:
-            print(f"[FFMPEG ERROR] {e}")
-            continue
-
-    cap.stop()
-    process.stdin.close()
-    process.wait()
-    cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    main()
