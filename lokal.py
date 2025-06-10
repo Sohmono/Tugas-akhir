@@ -29,7 +29,8 @@ if not firebase_admin._apps:
         'databaseURL': 'https://securitydata-c84bb-default-rtdb.asia-southeast1.firebasedatabase.app'
     })
 
-yolo_model = YOLO("yolo.pt")
+human_model = YOLO("human.pt")
+object_model = YOLO("object.pt")
 try:
     yolo_model.to('cuda')
 except:
