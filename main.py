@@ -113,7 +113,7 @@ def load_latest_kelas():
     return mapping.get(ref,"Kosong")
 
 # Ambil data terbaru dari /Dataset
-def ambil_data_terbaru(limit=5):    
+def ambil_data_terbaru(limit=1):    
     ref_tgl = db.reference("/Dataset")
     tgl_dict = ref_tgl.order_by_key().limit_to_last(1).get()
     if not tgl_dict:
