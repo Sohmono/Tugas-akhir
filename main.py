@@ -99,52 +99,57 @@ def extract_video_id(url):
 
 # Load latest class from LGBM
 def load_latest_kelas():
-    ref = db.reference("/Dataset")
-    data = ref.get()
-    latest_dt = None
-    latest_kelas = "Belum tersedia"
-    if data:
-        for tgl, w_dict in data.items():
-            for wkt, detail in w_dict.items():
-                try:
-                    dt = datetime.strptime(f"{tgl} {wkt}", "%Y_%m_%d %H_%M_%S")
-                    if not latest_dt or dt > latest_dt:
-                        latest_dt = dt
-                        latest_kelas = detail.get("Kelas")
-                except:
-                    continue
-    return latest_kelas
+    ref = db.reference("/KelasEsp").get()
+    mapping = {
+        0: "Bahaya",
+        1: "Dobrak",
+        2: "Kosong",
+        3: "Orang masuk",
+        4: "Pembobolan",
+        5: "Pencurian",
+        6: "Tamu depan",
+        7: "Waspada"
+    }
+    return mapping.get(ref,"Kosong")
 
 # Ambil data terbaru dari /Dataset
-def ambil_data_terbaru():
-    dataset_ref = db.reference("/Dataset")
-    dataset = dataset_ref.get()
-    if not dataset:
+def ambil_data_terbaru(limit=5):    
+    ref_tgl = db.reference("/Dataset")
+    tgl_dict = ref_tgl.order_by_key().limit_to_last(1).get()
+    if not tgl_dict:
         return
 
-    tgl = sorted(dataset.keys())[-1]
-    wkt = sorted(dataset[tgl].keys())[-1]
-    data = dataset[tgl][wkt]
+    tgl = list(tgl_dict.keys())[0]
+    ref_wkt = db.reference(f"/Dataset/{tgl}")
+    wkt_dict = ref_wkt.order_by_key().limit_to_last(limit).get()
+    if not wkt_dict:
+        return
 
-    new_row = {
-        "Tanggal": tgl,
-        "Waktu": wkt,
-        "Getar": int(data.get("Getar", 0)),
-        "Suara": int(data.get("Suara", 0)),
-        "X": int(data.get("X", 0)),
-        "Y": int(data.get("Y", 0)),
-        "Z": int(data.get("Z", 0)),
-        "Jumlah Manusia": int(data.get("Jumlah manusia", 0)),
-        "Manusia x Bahaya": int(data.get("Jlh manusiaxbahaya", 0)),
-        "Manusia x Barang": int(data.get("Jlh manusiaxbarang", 0)),
-        "Mean Bahaya": float(data.get("Mean bahaya", 0.0)),
-        "Mean Barang": float(data.get("Mean barang", 0.0)),
-    }
+    # Buat dataframe dari data waktu terbaru
+    new_rows = []
+    for wkt in sorted(wkt_dict.keys()):
+        data = wkt_dict[wkt]
+        new_rows.append({
+            "Tanggal": tgl,
+            "Waktu": wkt,
+            "Getar": int(data.get("Getar", 0)),
+            "Suara": int(data.get("Suara", 0)),
+            "X": int(data.get("X", 0)),
+            "Y": int(data.get("Y", 0)),
+            "Z": int(data.get("Z", 0)),
+            "Jumlah Manusia": int(data.get("Jumlah manusia", 0)),
+            "Manusia x Bahaya": int(data.get("Jlh manusiaxbahaya", 0)),
+            "Manusia x Barang": int(data.get("Jlh manusiaxbarang", 0)),
+            "Mean Bahaya": float(data.get("Mean bahaya", 0.0)),
+            "Mean Barang": float(data.get("Mean barang", 0.0)),
+        })
 
-    df = st.session_state.sensor_df
-    if not ((df["Tanggal"] == tgl) & (df["Waktu"] == wkt)).any():
-        df.loc[len(df)] = new_row
-        st.session_state.sensor_df = df.tail(100).reset_index(drop=True)
+    df = pd.DataFrame(new_rows)
+    # Tambah data yang belum ada di session state
+    df_old = st.session_state.sensor_df
+    merged = pd.concat([df_old, df]).drop_duplicates(subset=["Tanggal", "Waktu"], keep="last")
+    st.session_state.sensor_df = merged.tail(100).reset_index(drop=True)
+
 
 # Main Page After Login
 def main_page():
