@@ -157,7 +157,7 @@ def main_page():
 
     st.markdown("<h1 style='text-align: center; color: black;'>Sistem Cerdas Keamanan Rumah</h1>", unsafe_allow_html=True)
     try:
-        firebase_url = db.reference("/streaming/video_url").get()
+        firebase_url = db.reference("/streaming").get()
         video_id = extract_video_id(firebase_url) if firebase_url else "kpbzVG_lBY4"
     except Exception as e:
         st.warning(f"Gagal mengambil video dari Firebase: {e}")
