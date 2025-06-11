@@ -9,6 +9,7 @@ import re
 import json
 import pandas as pd
 import time
+from urllib.parse import urlparse, parse_qs
 
 # Firebase Init from secrets
 if not firebase_admin._apps:
@@ -94,8 +95,22 @@ def konfirmasi_toggle_dialog(status_baru):
 
 # Extract video ID from link
 def extract_video_id(url):
-    match = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
-    return match.group(1) if match else None
+    parsed_url = urlparse(url)
+
+    # Case 1: https://www.youtube.com/watch?v=VIDEO_ID
+    if 'youtube.com' in parsed_url.netloc:
+        if parsed_url.path == '/watch':
+            query = parse_qs(parsed_url.query)
+            return query.get('v', [None])[0]
+        # Case 2: https://www.youtube.com/embed/VIDEO_ID or /live/VIDEO_ID
+        elif parsed_url.path.startswith('/embed/') or parsed_url.path.startswith('/live/'):
+            return parsed_url.path.split('/')[2]
+
+    # Case 3: https://youtu.be/VIDEO_ID
+    if 'youtu.be' in parsed_url.netloc:
+        return parsed_url.path.lstrip('/')
+
+    return None
 
 # Load latest class from LGBM
 def load_latest_kelas():
