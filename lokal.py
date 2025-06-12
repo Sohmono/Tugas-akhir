@@ -60,7 +60,6 @@ def push_lgbm_to_firebase(pred):
         'Tamu depan': 6,
         'Waspada': 7
     }
-
     predInt = kelas_map.get(pred, -1)
     db.reference('/KelasEsp').set(predInt)
 
@@ -84,7 +83,6 @@ def push_yolo_to_firebase(date_key, time_key, manusia, jlh_barang, jlh_bahaya, m
 
 def kirim_notifikasi_telegram(kelas, frame):
     pesan_dict = {
-        
         "Waspada": "🚨 Deteksi: Ada manusia dengan objek berbahaya",
         "Dobrak": "⚠️ Deteksi: Ada upaya pendobrakan!",
         "Orang masuk": "ℹ️ Deteksi: Seseorang memasuki rumah!",
@@ -101,6 +99,15 @@ def kirim_notifikasi_telegram(kelas, frame):
             bot.send_photo(chat_id=CHAT_ID, photo=buffer.tobytes())
     except Exception as e:
         print(f"[TELEGRAM ERROR] {e}")
+
+# === CEK STATUS SISTEM DARI FIREBASE === #
+def cek_status_sistem():
+    try:
+        status = db.reference('/status_sistem/aktif').get()
+        return int(status) if status is not None else 0
+    except Exception as e:
+        print(f"[STATUS ERROR] {e}")
+        return 0
 
 # === VIDEO STREAM === #
 class VideoCaptureThreaded:
@@ -126,15 +133,20 @@ class VideoCaptureThreaded:
 def klasifikasi_loop():
     global last_prediction, last_frame_tele
     while True:
+        # Cek status sistem
+        if cek_status_sistem() == 0:
+            print("[INFO] Sistem nonaktif (klasifikasi). Menunggu diaktifkan...")
+            time.sleep(1)
+            continue
+
         try:
-            # === AMBIL DATA TERBARU DARI /DataReal (langsung, bukan array child) ===
             latest_data = db.reference('/DataReal').get()
             if not latest_data:
                 print("[INFO] Data /DataReal belum ada.")
                 time.sleep(1)
                 continue
 
-            features = np.array([[
+            features = np.array([[ 
                 get_feature_value(latest_data, 'Getar'),
                 get_feature_value(latest_data, 'Suara'),
                 get_feature_value(latest_data, 'X'),
@@ -153,6 +165,7 @@ def klasifikasi_loop():
             date_key = now.strftime("%Y_%m_%d")
             time_key = now.strftime("%H_%M_%S")
             db.reference(f'/Dataset/{date_key}/{time_key}/Kelas').set(str(prediction))
+            db.reference('/DataReal/Kelas').set(str(prediction))
 
             if prediction != last_prediction:
                 last_prediction = prediction
@@ -226,26 +239,12 @@ def main():
 
     cap = VideoCaptureThreaded(RTSP_URL)
     while True:
-        ret, frame = cap.read()
-        if ret and frame is not None and frame.size > 0:
-            break
-        print("[WAITING] Menunggu frame pertama...")
-        time.sleep(0.5)
+        # ==== CEK STATUS SISTEM ====
+        if cek_status_sistem() == 0:
+            print("[INFO] Sistem nonaktif. Menunggu diaktifkan...")
+            time.sleep(1)
+            continue
 
-    process = subprocess.Popen([
-        "C:/ffmpeg/bin/ffmpeg.exe",
-        '-loglevel', 'info', '-y',
-        '-f', 'rawvideo', '-vcodec', 'rawvideo',
-        '-pix_fmt', 'bgr24', '-s', f'{WIDTH}x{HEIGHT}', '-r', str(FPS), '-i', '-',
-        '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
-        '-c:a', 'aac', '-b:a', '128k', '-shortest', '-f', 'flv', RTMP_URL
-    ], stdin=subprocess.PIPE)
-
-    threading.Thread(target=klasifikasi_loop, daemon=True).start()
-    last_sent = time.time()
-
-    while True:
         ret, frame = cap.read()
         if not ret or frame is None:
             print("[RTSP] Frame kosong, reconnect...")
@@ -281,4 +280,19 @@ def main():
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
+    # Supaya ffmpeg process hanya dimulai saat sistem aktif
+    while cek_status_sistem() == 0:
+        print("[INFO] Sistem nonaktif (startup). Menunggu diaktifkan...")
+        time.sleep(2)
+    process = subprocess.Popen([
+        "C:/ffmpeg/bin/ffmpeg.exe",
+        '-loglevel', 'info', '-y',
+        '-f', 'rawvideo', '-vcodec', 'rawvideo',
+        '-pix_fmt', 'bgr24', '-s', f'{WIDTH}x{HEIGHT}', '-r', str(FPS), '-i', '-',
+        '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'veryfast',
+        '-c:a', 'aac', '-b:a', '128k', '-shortest', '-f', 'flv', RTMP_URL
+    ], stdin=subprocess.PIPE)
+    threading.Thread(target=klasifikasi_loop, daemon=True).start()
+    last_sent = time.time()
     main()
