@@ -90,12 +90,27 @@ void loop() {
   Firebase.ready();
   unsigned long currentTime = millis();
 
-  // // Deteksi getaran (rising edge)
-  // bool currentVibration = digitalRead(VIBRATION_PIN);
-  // if (currentVibration && !lastVibrationState) {
-  //   vibrationCount++;
-  // }
-  // lastVibrationState = currentVibration;
+  // Selalu update status sistem dari Firebase
+  if (Firebase.RTDB.getInt(&fbdo, "/status_sistem/aktif")) {
+    sistemAktif = fbdo.intData();
+  }
+  if (Firebase.RTDB.getInt(&fbdo, "/KelasEsp")) {
+    latestClass = fbdo.intData();
+  }
+  if (Firebase.RTDB.getInt(&fbdo, "/LuarEsp")) {
+    luar = fbdo.intData();
+  }
+
+  Serial.printf("Kelas: %d\n", latestClass);
+  Serial.printf("Sistem Aktif: %d\n", sistemAktif);
+  Serial.printf("Luar: %d\n", luar);
+
+  // === CEK: Jika sistem nonaktif, tidak melakukan apapun, hanya polling status setiap 500ms ===
+  if (sistemAktif == 0) {
+    noTone(BUZZER_PIN);  // pastikan buzzer off
+    delay(500);          // tidak perlu terlalu cepat
+    return;
+  }
 
   // Deteksi suara
   if (currentTime - lastSoundReadTime >= soundReadInterval) {
@@ -105,69 +120,53 @@ void loop() {
       maxSound = currentSound;
     }
   }
-  // Baca status dari Firebase (hanya setiap 1 detik)
-    if (Firebase.RTDB.getInt(&fbdo, "/status_sistem/aktif")) {
-      sistemAktif = fbdo.intData();
-    }
-    if (Firebase.RTDB.getInt(&fbdo, "/KelasEsp")) {
-      latestClass = fbdo.intData();
-    }
-    if (Firebase.RTDB.getInt(&fbdo, "/LuarEsp")) {
-      luar = fbdo.intData();
-    }
-    Serial.printf("Kelas: %d\n", latestClass);
-    Serial.printf("Sistem Aktif: %d\n", sistemAktif);
-    Serial.printf("Luar: %d\n", luar);
 
-
-    if (sistemAktif==1) {
-      switch (latestClass) {
-        case 0:
-          for (int i = 0; i < 10; i++) {
-            tone(BUZZER_PIN, 1000); delay(200);
-            tone(BUZZER_PIN, 1500); delay(200);
-            noTone(BUZZER_PIN); delay(100);
-          }
-          break;
-        case 1:
-          for (int i = 0; i < 10; i++) {
-            tone(BUZZER_PIN, 900); delay(150);
-            tone(BUZZER_PIN, 1800); delay(150);
-            noTone(BUZZER_PIN); delay(100);
-          }
-          break;
-        case 4:
-          for (int i = 0; i < 10; i++) {
-            tone(BUZZER_PIN, 1200); delay(300);
-            noTone(BUZZER_PIN); delay(100);
-          }
-          break;
-        case 5:
-          for (int i = 0; i < 4; i++) {
-            tone(BUZZER_PIN, 800); delay(200);
-            tone(BUZZER_PIN, 1600); delay(200);
-            noTone(BUZZER_PIN); delay(150);
-          }
-          break;
-        case 3:
-          if (luar == 1) {
-            tone(BUZZER_PIN, 1047); delay(300);
-            tone(BUZZER_PIN, 1319); delay(300);
-            tone(BUZZER_PIN, 1568); delay(300);
-          }
-          break;
-        case 6:
-          tone(BUZZER_PIN, 1047); delay(300);
-          tone(BUZZER_PIN, 1319); delay(300);
-          tone(BUZZER_PIN, 1568); delay(300);
-          noTone(BUZZER_PIN);
-          break;
-        default:
-          noTone(BUZZER_PIN);
-          break;
+  // Eksekusi buzzer hanya jika aktif
+  switch (latestClass) {
+    case 0:
+      for (int i = 0; i < 10; i++) {
+        tone(BUZZER_PIN, 1000); delay(200);
+        tone(BUZZER_PIN, 1500); delay(200);
+        noTone(BUZZER_PIN); delay(100);
       }
-    }
-    
+      break;
+    case 1:
+      for (int i = 0; i < 10; i++) {
+        tone(BUZZER_PIN, 900); delay(150);
+        tone(BUZZER_PIN, 1800); delay(150);
+        noTone(BUZZER_PIN); delay(100);
+      }
+      break;
+    case 4:
+      for (int i = 0; i < 10; i++) {
+        tone(BUZZER_PIN, 1200); delay(300);
+        noTone(BUZZER_PIN); delay(100);
+      }
+      break;
+    case 5:
+      for (int i = 0; i < 4; i++) {
+        tone(BUZZER_PIN, 800); delay(200);
+        tone(BUZZER_PIN, 1600); delay(200);
+        noTone(BUZZER_PIN); delay(150);
+      }
+      break;
+    case 3:
+      if (luar == 1) {
+        tone(BUZZER_PIN, 1047); delay(300);
+        tone(BUZZER_PIN, 1319); delay(300);
+        tone(BUZZER_PIN, 1568); delay(300);
+      }
+      break;
+    case 6:
+      tone(BUZZER_PIN, 1047); delay(300);
+      tone(BUZZER_PIN, 1319); delay(300);
+      tone(BUZZER_PIN, 1568); delay(300);
+      noTone(BUZZER_PIN);
+      break;
+    default:
+      noTone(BUZZER_PIN);
+      break;
+  }
 
   // Upload data ke Firebase setiap detik
   if (currentTime - lastSendTime >= sendInterval) {
@@ -191,7 +190,6 @@ void loop() {
     char dateStr[11];
     strftime(dateStr, sizeof(dateStr), "%Y_%m_%d", &timeinfo);
 
-    
     // Siapkan data
     int sound = maxSound;
     maxSound = 0;
@@ -225,25 +223,8 @@ void loop() {
     Firebase.RTDB.setInt(&fbdo, Datareal + "/Y", y);
     Firebase.RTDB.setInt(&fbdo, Datareal + "/Z", z);
 
-
     Serial.printf("Sent to Firebase at %s:\n", timeStr);
     Serial.printf("Getar: %d, Suara: %d, Magneto: (%d, %d, %d)\n", vibrationCount, sound, x, y, z);
     vibrationCount = 0;
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
