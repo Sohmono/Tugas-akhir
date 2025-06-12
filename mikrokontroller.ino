@@ -10,8 +10,8 @@
 // WiFi & Firebase
 #define WIFI_SSID "WIFI-2.4G-9019D5"
 #define WIFI_PASSWORD "Sekolah037997"
-#define API_KEY "AIzaSyDCnpbbLOaWsXOGxjQOI4T1xot4i_ReFgU"
-#define DATABASE_URL "https://securitydata-c84bb-default-rtdb.asia-southeast1.firebasedatabase.app"
+#define API_KEY "AIzaSyCRipdSEUjA20b2edKwNIRbrciX2eM-9eY"
+#define DATABASE_URL "https://backupta-4c28a-default-rtdb.asia-southeast1.firebasedatabase.app"
 #define USER_EMAIL "sarutobitakashi@gmail.com"
 #define USER_PASSWORD "Takashi@2004"
 
@@ -34,7 +34,6 @@ int maxSound = 0;
 #define SCL_PIN 22
 #define BUZZER_PIN 25
 
-int vibrationCount = 0;
 bool lastVibrationState = false;
 
 // Kompas
@@ -45,11 +44,18 @@ const int threshold = 300;
 // Firebase value
 int latestClass = 2;
 int luar = 0;
-int sistemAktif = 0;
+int sistemAktif = 1;
+
+volatile int vibrationCount = 0;
+
+void IRAM_ATTR onVibration() {
+  vibrationCount++;
+}
 
 void setup() {
   Serial.begin(115200);
   pinMode(VIBRATION_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(VIBRATION_PIN), onVibration, RISING);
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -84,12 +90,12 @@ void loop() {
   Firebase.ready();
   unsigned long currentTime = millis();
 
-  // Deteksi getaran (rising edge)
-  bool currentVibration = digitalRead(VIBRATION_PIN);
-  if (currentVibration && !lastVibrationState) {
-    vibrationCount++;
-  }
-  lastVibrationState = currentVibration;
+  // // Deteksi getaran (rising edge)
+  // bool currentVibration = digitalRead(VIBRATION_PIN);
+  // if (currentVibration && !lastVibrationState) {
+  //   vibrationCount++;
+  // }
+  // lastVibrationState = currentVibration;
 
   // Deteksi suara
   if (currentTime - lastSoundReadTime >= soundReadInterval) {
@@ -99,25 +105,22 @@ void loop() {
       maxSound = currentSound;
     }
   }
-
-  // Deteksi kompas
-  compass.read();
-  int x = compass.getX();
-  int y = compass.getY();
-  int z = compass.getZ();
-
-  int dx = abs(x - prevX);
-  int dy = abs(y - prevY);
-  int dz = abs(z - prevZ);
-  if (dx > threshold || dy > threshold || dz > threshold) {
-    Serial.println("GANGGUAN MEDAN MAGNET TERDETEKSI!");
-  }
-  prevX = x;
-  prevY = y;
-  prevZ = z;
+  // Baca status dari Firebase (hanya setiap 1 detik)
+    if (Firebase.RTDB.getInt(&fbdo, "/status_sistem/aktif")) {
+      sistemAktif = fbdo.intData();
+    }
+    if (Firebase.RTDB.getInt(&fbdo, "/KelasEsp")) {
+      latestClass = fbdo.intData();
+    }
+    if (Firebase.RTDB.getInt(&fbdo, "/LuarEsp")) {
+      luar = fbdo.intData();
+    }
+    Serial.printf("Kelas: %d\n", latestClass);
+    Serial.printf("Sistem Aktif: %d\n", sistemAktif);
+    Serial.printf("Luar: %d\n", luar);
 
 
-    if (sistemAktif) {
+    if (sistemAktif==1) {
       switch (latestClass) {
         case 0:
           for (int i = 0; i < 10; i++) {
@@ -164,10 +167,18 @@ void loop() {
           break;
       }
     }
+    
 
   // Upload data ke Firebase setiap detik
   if (currentTime - lastSendTime >= sendInterval) {
     lastSendTime = currentTime;
+
+    int countedVibration;
+    noInterrupts();
+    countedVibration = vibrationCount;
+    vibrationCount = 0;
+    interrupts();
+    Serial.printf("Getaran terdeteksi: %d\n", countedVibration);
 
     // Ambil waktu sekarang
     struct tm timeinfo;
@@ -180,17 +191,7 @@ void loop() {
     char dateStr[11];
     strftime(dateStr, sizeof(dateStr), "%Y_%m_%d", &timeinfo);
 
-    // Baca status dari Firebase (hanya setiap 1 detik)
-    if (Firebase.RTDB.getInt(&fbdo, "/status_sistem/aktif")) {
-      sistemAktif = fbdo.intData();
-    }
-    if (Firebase.RTDB.getInt(&fbdo, "/KelasEsp")) {
-      latestClass = fbdo.intData();
-    }
-    if (Firebase.RTDB.getInt(&fbdo, "/LuarEsp")) {
-      luar = fbdo.intData();
-    }
-
+    
     // Siapkan data
     int sound = maxSound;
     maxSound = 0;
@@ -211,11 +212,19 @@ void loop() {
     prevZ = z;
 
     String basePath = String("/Dataset/") + dateStr + "/" + timeStr;
-    Firebase.RTDB.setInt(&fbdo, basePath + "/Getar", vibrationCount);
+    Firebase.RTDB.setInt(&fbdo, basePath + "/Getar", countedVibration);
     Firebase.RTDB.setInt(&fbdo, basePath + "/Suara", sound);
     Firebase.RTDB.setInt(&fbdo, basePath + "/X", x);
     Firebase.RTDB.setInt(&fbdo, basePath + "/Y", y);
     Firebase.RTDB.setInt(&fbdo, basePath + "/Z", z);
+
+    String Datareal = String("/DataReal/");
+    Firebase.RTDB.setInt(&fbdo, Datareal + "/Getar", countedVibration);
+    Firebase.RTDB.setInt(&fbdo, Datareal + "/Suara", sound);
+    Firebase.RTDB.setInt(&fbdo, Datareal + "/X", x);
+    Firebase.RTDB.setInt(&fbdo, Datareal + "/Y", y);
+    Firebase.RTDB.setInt(&fbdo, Datareal + "/Z", z);
+
 
     Serial.printf("Sent to Firebase at %s:\n", timeStr);
     Serial.printf("Getar: %d, Suara: %d, Magneto: (%d, %d, %d)\n", vibrationCount, sound, x, y, z);
